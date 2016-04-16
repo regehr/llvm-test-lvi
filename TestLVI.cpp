@@ -47,7 +47,8 @@ public:
       if (!Inst->getType()->isIntegerTy())
 	continue;
       ConstantRange CR = LVI->getConstantRange(Inst, Inst->getParent());
-      errs() << "    " << CR << "\n";
+      if (!CR.isFullSet())
+        errs() << "    " << CR << "\n";
     }
     errs() << "\n";
   }
@@ -63,10 +64,24 @@ public:
     trapBuilder.CreateUnreachable();
     return TrapBB;
   }
-  
+
+  Instruction *getNextInst(Instruction *I) {
+    auto BB = I->getParent();
+    bool gotit = false;
+    for (BasicBlock::iterator iter = BB->begin(), e = BB->end(); iter != e; ++iter) {
+      Instruction *IP = &*iter;
+      if (gotit)
+        return IP;
+      if (IP == I)
+        gotit = true;
+    }
+    assert(false);
+  }
+
   bool runOnFunction(Function &F) override {
     LazyValueInfo *LVI = &getAnalysis<LazyValueInfo>();
-    printConstantRanges(F, LVI);
+    if (true)
+      printConstantRanges(F, LVI);
     auto &C = F.getContext();
     std::vector<Instruction *> Insts;
     std::vector<ConstantRange> CRs;
@@ -80,14 +95,30 @@ public:
       Insts.push_back(Inst);
       CRs.push_back(CR);
     }
+
+    // TODO also test value tracking!
+
     BasicBlock *TrapBB = createTrapBB(F);
-    for (auto Inst : Insts) {
+    for (int i = 0; i < Insts.size(); ++i) {
+      auto Inst = Insts[i];
+      auto CR = CRs[i];
       BasicBlock *OldBB = Inst->getParent();
-      BasicBlock *Split = OldBB->splitBasicBlock(Inst);
+      BasicBlock *Split = OldBB->splitBasicBlock(getNextInst(Inst));
+      auto branch = cast<BranchInst>(OldBB->getTerminator());
+      branch->eraseFromParent();
+      IRBuilder<> builder(OldBB);
+      auto Res1 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getLower()));
+      auto Res2 = builder.CreateICmpULT(Inst, builder.getInt(CR.getUpper()));
+      Value *Res3;
+      if (CR.getLower().ult(CR.getUpper()))
+        Res3 = builder.CreateAnd(Res1, Res2);
+      else
+        Res3 = builder.CreateOr(Res1, Res2);
+      builder.CreateCondBr(Res3, Split, TrapBB);
     }
     return true;
   }
-  
+
 };
 }
 
@@ -102,5 +133,5 @@ static void registerClangPass(const PassManagerBuilder &,
                               legacy::PassManagerBase &PM) {
   PM.add(new TestLVI());
 }
-static RegisterStandardPasses RegisterClangPass(PassManagerBuilder::EP_Peephole,
+static RegisterStandardPasses RegisterClangPass(PassManagerBuilder::EP_OptimizerLast,
                                                 registerClangPass);

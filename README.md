@@ -25,6 +25,8 @@ Last tested against LLVM r266472
 # Using
 
 ```
+clang -O -Xclang -load -Xclang LLVMTestLVI.so -c foo.c
+
 opt -load LLVMTestLVI.so -test-lvi ../test/dead.ll | llvm-dis
 ```
 
