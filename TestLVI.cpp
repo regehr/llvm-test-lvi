@@ -82,11 +82,8 @@ public:
       CRs.push_back(CR);
     }
 
-    // errs() << F << "\n";
-
-    // TODO unconditionally jump to trap if CR is the empty range
-
     // TODO also test value tracking dataflow facts
+    // TODO easy to emit better diagnostics if we want to do that
 
     BasicBlock *TrapBB = createTrapBB(F);
     for (int i = 0; i < Insts.size(); ++i) {
@@ -98,14 +95,18 @@ public:
       auto branch = cast<BranchInst>(OldBB->getTerminator());
       branch->eraseFromParent();
       IRBuilder<> builder(OldBB);
-      auto Res1 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getLower()));
-      auto Res2 = builder.CreateICmpULT(Inst, builder.getInt(CR.getUpper()));
-      Value *Res3;
-      if (CR.getLower().ult(CR.getUpper()))
-        Res3 = builder.CreateAnd(Res1, Res2);
-      else
-        Res3 = builder.CreateOr(Res1, Res2);
-      builder.CreateCondBr(Res3, Split, TrapBB);
+      if (CR.isEmptySet()) {
+        builder.CreateBr(TrapBB);
+      } else {
+        auto Res1 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getLower()));
+        auto Res2 = builder.CreateICmpULT(Inst, builder.getInt(CR.getUpper()));
+        Value *Res3;
+        if (CR.getLower().ult(CR.getUpper()))
+          Res3 = builder.CreateAnd(Res1, Res2);
+        else
+          Res3 = builder.CreateOr(Res1, Res2);
+        builder.CreateCondBr(Res3, Split, TrapBB);
+      }
     }
     return true;
   }
