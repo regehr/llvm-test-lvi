@@ -84,7 +84,9 @@ public:
 
     // errs() << F << "\n";
 
-    // TODO also test value tracking!
+    // TODO unconditionally jump to trap if CR is the empty range
+
+    // TODO also test value tracking dataflow facts
 
     BasicBlock *TrapBB = createTrapBB(F);
     for (int i = 0; i < Insts.size(); ++i) {
