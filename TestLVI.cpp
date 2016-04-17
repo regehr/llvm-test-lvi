@@ -40,8 +40,7 @@ public:
   }
 
   BasicBlock *createTrapBB(Function &F) {
-    auto &C = F.getContext();
-    BasicBlock *TrapBB = BasicBlock::Create(C, "trap", &F);
+    BasicBlock *TrapBB = BasicBlock::Create(F.getContext(), "trap", &F);
     IRBuilder<> trapBuilder(TrapBB);
     Value *TrapValue = Intrinsic::getDeclaration(F.getParent(), Intrinsic::trap);
     CallInst *TrapCall = trapBuilder.CreateCall(TrapValue);
@@ -51,6 +50,7 @@ public:
     return TrapBB;
   }
 
+  // well this is stupid but I don't know the better way to do this
   Instruction *getNextInst(Instruction *I) {
     auto BB = I->getParent();
     bool gotit = false;
