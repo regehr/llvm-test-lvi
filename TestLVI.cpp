@@ -39,20 +39,6 @@ public:
     Info.addRequired<LazyValueInfo>();
   }
 
-  void printConstantRanges(Function &F, LazyValueInfo *LVI) {
-    errs() << F.getName() << " :\n";
-    for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
-      Instruction *Inst = &*I;
-      // errs() << *Inst << "\n";
-      if (!Inst->getType()->isIntegerTy())
-	continue;
-      ConstantRange CR = LVI->getConstantRange(Inst, Inst->getParent());
-      if (!CR.isFullSet())
-        errs() << "    " << CR << "\n";
-    }
-    errs() << "\n";
-  }
-
   BasicBlock *createTrapBB(Function &F) {
     auto &C = F.getContext();
     BasicBlock *TrapBB = BasicBlock::Create(C, "trap", &F);
@@ -80,8 +66,6 @@ public:
 
   bool runOnFunction(Function &F) override {
     LazyValueInfo *LVI = &getAnalysis<LazyValueInfo>();
-    if (true)
-      printConstantRanges(F, LVI);
     auto &C = F.getContext();
     std::vector<Instruction *> Insts;
     std::vector<ConstantRange> CRs;
@@ -89,6 +73,8 @@ public:
       Instruction *Inst = &*I;
       if (!Inst->getType()->isIntegerTy())
 	continue;
+      if(Inst->getOpcode() == Instruction::PHI)
+        continue;
       ConstantRange CR = LVI->getConstantRange(Inst, Inst->getParent());
       if (CR.isFullSet())
 	continue;
@@ -96,12 +82,15 @@ public:
       CRs.push_back(CR);
     }
 
+    // errs() << F << "\n";
+
     // TODO also test value tracking!
 
     BasicBlock *TrapBB = createTrapBB(F);
     for (int i = 0; i < Insts.size(); ++i) {
       auto Inst = Insts[i];
       auto CR = CRs[i];
+      errs() << "instrumenting " << CR << " at " << *Inst << "\n";
       BasicBlock *OldBB = Inst->getParent();
       BasicBlock *Split = OldBB->splitBasicBlock(getNextInst(Inst));
       auto branch = cast<BranchInst>(OldBB->getTerminator());
