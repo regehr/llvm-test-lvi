@@ -1,11 +1,5 @@
-#define DEBUG_TYPE "overflow-dedup"
-#include "llvm/Support/Debug.h"
-
-#include "llvm/ADT/Statistic.h"
-STATISTIC(TestLVICount, "Number of redundant overflow checks eliminated");
-
+#include "llvm/Analysis/LazyValueInfo.h"
 #include "llvm/IR/ConstantRange.h"
-#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
@@ -13,14 +7,8 @@ STATISTIC(TestLVICount, "Number of redundant overflow checks eliminated");
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/RandomNumberGenerator.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Analysis/LazyValueInfo.h"
-
-#include <map>
-#include <utility>
 
 using namespace llvm;
 
@@ -39,6 +27,9 @@ public:
     Info.addRequired<LazyValueInfo>();
   }
 
+  /*
+   * append a basic block that traps out
+   */
   BasicBlock *createTrapBB(Function &F) {
     BasicBlock *TrapBB = BasicBlock::Create(F.getContext(), "trap", &F);
     IRBuilder<> trapBuilder(TrapBB);
@@ -50,7 +41,9 @@ public:
     return TrapBB;
   }
 
-  // well this is stupid but I don't know the better way to do this
+  /*
+   * well this is stupid but I don't know the better way to do it
+   */
   Instruction *getNextInst(Instruction *I) {
     auto BB = I->getParent();
     bool gotit = false;
@@ -61,19 +54,26 @@ public:
       if (IP == I)
         gotit = true;
     }
-    assert(false);
+    llvm_unreachable("instuction not found");
   }
 
+  /*
+   * TODO
+   * - also test dataflow facts from LazyValueInfo
+   * - consider emitting diagnostics instead of just trapping
+   */
   bool runOnFunction(Function &F) override {
     LazyValueInfo *LVI = &getAnalysis<LazyValueInfo>();
-    auto &C = F.getContext();
+    /*
+     * record the dataflow facts before we start messing with the function
+     */
     std::vector<Instruction *> Insts;
     std::vector<ConstantRange> CRs;
     for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
       Instruction *Inst = &*I;
       if (!Inst->getType()->isIntegerTy())
 	continue;
-      if(Inst->getOpcode() == Instruction::PHI)
+      if (Inst->getOpcode() == Instruction::PHI)
         continue;
       ConstantRange CR = LVI->getConstantRange(Inst, Inst->getParent());
       if (CR.isFullSet())
@@ -81,9 +81,11 @@ public:
       Insts.push_back(Inst);
       CRs.push_back(CR);
     }
-
-    // TODO also test value tracking dataflow facts
-    // TODO easy to emit better diagnostics if we want to do that
+    /*
+     * bail early if we didn't find anything to check
+     */
+    if (Insts.size() == 0)
+      return false;
 
     BasicBlock *TrapBB = createTrapBB(F);
     for (int i = 0; i < Insts.size(); ++i) {
@@ -91,13 +93,34 @@ public:
       auto CR = CRs[i];
       errs() << "instrumenting " << CR << " at " << *Inst << "\n";
       BasicBlock *OldBB = Inst->getParent();
+
+      /*
+       * splitBasicBlock() splits before the argument instruction but we need to
+       * split after
+       */
       BasicBlock *Split = OldBB->splitBasicBlock(getNextInst(Inst));
+
+      /*
+       * nuke the unconditional branch that got inserted by splitBasicBlock()
+       */
       auto branch = cast<BranchInst>(OldBB->getTerminator());
       branch->eraseFromParent();
+
       IRBuilder<> builder(OldBB);
       if (CR.isEmptySet()) {
+        /*
+         * an empty interval indicates dead code so unconditionally trap
+         */
         builder.CreateBr(TrapBB);
       } else {
+        /*
+         * the only trick here is that for a regular interval the value must be
+         * >= Lower && < Upper whereas for a wrapped interval the value only has
+         * to be >= Lower || < Upper
+         *
+         * we can do this using either signed or unsigned as long as we make a
+         * consistent choice
+         */
         auto Res1 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getLower()));
         auto Res2 = builder.CreateICmpULT(Inst, builder.getInt(CR.getUpper()));
         Value *Res3;
