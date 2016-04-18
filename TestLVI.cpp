@@ -17,18 +17,8 @@ namespace {
 class TestLVI : public llvm::FunctionPass {
 
 private:
-
-public:
-  static char ID;
-
-  TestLVI() : llvm::FunctionPass(ID) {}
-
-  void getAnalysisUsage(AnalysisUsage &Info) const override {
-    Info.addRequired<LazyValueInfo>();
-  }
-
   /*
-   * append a basic block that traps out
+   * make a new basic block that traps out
    */
   BasicBlock *createTrapBB(Function &F) {
     BasicBlock *TrapBB = BasicBlock::Create(F.getContext(), "trap", &F);
@@ -55,6 +45,15 @@ public:
         gotit = true;
     }
     llvm_unreachable("instuction not found");
+  }
+
+public:
+  static char ID;
+
+  TestLVI() : llvm::FunctionPass(ID) {}
+
+  void getAnalysisUsage(AnalysisUsage &Info) const override {
+    Info.addRequired<LazyValueInfo>();
   }
 
   /*
@@ -118,8 +117,8 @@ public:
          * >= Lower && < Upper whereas for a wrapped interval the value only has
          * to be >= Lower || < Upper
          *
-         * we can do this using either signed or unsigned as long as we make a
-         * consistent choice
+         * we can do this using either signed or unsigned as long as we're
+         * consistent about it
          */
         auto Res1 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getLower()));
         auto Res2 = builder.CreateICmpULT(Inst, builder.getInt(CR.getUpper()));
