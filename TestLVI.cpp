@@ -1,4 +1,5 @@
 #include "llvm/Analysis/LazyValueInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -62,12 +63,16 @@ public:
    * - consider emitting diagnostics instead of just trapping
    */
   bool runOnFunction(Function &F) override {
+    const DataLayout &DL = F.getParent()->getDataLayout();
     LazyValueInfo *LVI = &getAnalysis<LazyValueInfo>();
     /*
      * record the dataflow facts before we start messing with the function
      */
     std::vector<Instruction *> Insts;
     std::vector<ConstantRange> CRs;
+    std::vector<APInt> Zeros;
+    std::vector<APInt> Ones;
+    std::vector<unsigned> Widths;
     for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
       Instruction *Inst = &*I;
       if (!Inst->getType()->isIntegerTy())
@@ -75,10 +80,16 @@ public:
       if (Inst->getOpcode() == Instruction::PHI)
         continue;
       ConstantRange CR = LVI->getConstantRange(Inst, Inst->getParent());
-      if (CR.isFullSet())
-	continue;
-      Insts.push_back(Inst);
-      CRs.push_back(CR);
+      unsigned Width = Inst->getType()->getIntegerBitWidth();
+      APInt Zero(Width, 0), One(Width, 0);
+      computeKnownBits(Inst, Zero, One, DL);
+      if (!CR.isFullSet() || !Zero.isMinValue() || !One.isMinValue()) {
+        Insts.push_back(Inst);
+        CRs.push_back(CR);
+        Zeros.push_back(Zero);
+        Ones.push_back(One);
+        Widths.push_back(Width);
+      }
     }
     /*
      * bail early if we didn't find anything to check
@@ -90,7 +101,10 @@ public:
     for (int i = 0; i < Insts.size(); ++i) {
       auto Inst = Insts[i];
       auto CR = CRs[i];
-      errs() << "instrumenting " << CR << " at " << *Inst << "\n";
+      auto Zero = Zeros[i];
+      auto One = Ones[i];
+      auto Width = Widths[i];
+      errs() << "instrumenting " << CR << Zero << One << " at " << *Inst << "\n";
       BasicBlock *OldBB = Inst->getParent();
 
       /*
@@ -112,22 +126,29 @@ public:
          */
         builder.CreateBr(TrapBB);
       } else {
-        /*
-         * the only trick here is that for a regular interval the value must be
-         * >= Lower && < Upper whereas for a wrapped interval the value only has
-         * to be >= Lower || < Upper
-         *
-         * we can do this using either signed or unsigned as long as we're
-         * consistent about it
-         */
-        auto Res1 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getLower()));
-        auto Res2 = builder.CreateICmpULT(Inst, builder.getInt(CR.getUpper()));
-        Value *Res3;
-        if (CR.getLower().ult(CR.getUpper()))
-          Res3 = builder.CreateAnd(Res1, Res2);
-        else
-          Res3 = builder.CreateOr(Res1, Res2);
-        builder.CreateCondBr(Res3, Split, TrapBB);
+        if (!CR.isFullSet()) {
+          /*
+           * the only trick here is that for a regular interval the value must be
+           * >= Lower && < Upper whereas for a wrapped interval the value only has
+           * to be >= Lower || < Upper
+           *
+           * we can do this using either signed or unsigned as long as we're
+           * consistent about it
+           */
+          auto Res1 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getLower()));
+          auto Res2 = builder.CreateICmpULT(Inst, builder.getInt(CR.getUpper()));
+          Value *Res3;
+          if (CR.getLower().ult(CR.getUpper()))
+            Res3 = builder.CreateAnd(Res1, Res2);
+          else
+            Res3 = builder.CreateOr(Res1, Res2);
+          builder.CreateCondBr(Res3, Split, TrapBB);
+        }
+        if (!Zero.isMinValue()) {
+          auto Res = builder.CreateAnd(Inst, builder.getInt(~Zero));
+          auto B = builder.CreateICmpEQ(Res, builder.getInt(APInt(Width, 0)));
+          builder.CreateCondBr(B, Split, TrapBB);
+        }
       }
     }
     return true;
