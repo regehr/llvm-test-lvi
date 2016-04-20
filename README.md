@@ -1,9 +1,8 @@
 # llvm-test-lvi
 
-An LLVM pass for testing the soundness of the LazyValueInfo analysis
-pass. It rewrites the code so that every integer-typed value for which
-a non-trivial ConstantRange can be inferred is dynamically checked
-that it is in the bounds specified by the interval.
+An LLVM pass for testing the soundness of the LazyValueInfo and
+ValueTracking analyses. It rewrites the code so that the compile-time
+dataflow facts are dynamically checked as the program executes.
 
 NOTE: Unless/until this patch lands, you'll need to build this pass
 against a patched LLVM:
@@ -19,8 +18,6 @@ cmake .. -DLLVM_ROOT=/path/to/llvm-install -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_
   -DCMAKE_BUILD_TYPE=Release
 make
 ```
-
-Last tested against LLVM r266472
 
 # Using
 
