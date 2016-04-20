@@ -157,14 +157,14 @@ public:
            * we can do this using either signed or unsigned as long as we're
            * consistent about it
            */
-          auto Res1 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getLower()));
-          auto Res2 = builder.CreateICmpULT(Inst, builder.getInt(CR.getUpper()));
+          auto Res1 = builder.CreateICmpULT(Inst, builder.getInt(CR.getLower()));
+          auto Res2 = builder.CreateICmpUGE(Inst, builder.getInt(CR.getUpper()));
           Value *Res3;
           if (CR.getLower().ult(CR.getUpper()))
-            Res3 = builder.CreateAnd(Res1, Res2);
-          else
             Res3 = builder.CreateOr(Res1, Res2);
-          NeedTrap = builder.CreateNot(builder.CreateOr(NeedTrap, Res3));
+          else
+            Res3 = builder.CreateAnd(Res1, Res2);
+          NeedTrap = builder.CreateOr(NeedTrap, Res3);
         }
         if (!Zero.isMinValue()) {
           auto Mask = builder.getInt(~Zero);
