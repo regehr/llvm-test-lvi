@@ -32,6 +32,23 @@ private:
     return TrapBB;
   }
 
+  std::string knownString(APInt &Zero, APInt &One) {
+    std::string S = "";
+    assert(Zero.getBitWidth() == One.getBitWidth());
+    for (unsigned i = 0; i < Zero.getBitWidth(); ++i) {
+      assert(!Zero.isNegative() || !One.isNegative());
+      if (Zero.isNegative())
+        S += "0";
+      else if (One.isNegative())
+        S += "1";
+      else
+        S += "x";
+      Zero <<= 1;
+      One <<= 1;
+    }
+    return S;
+  }
+
   /*
    * well this is stupid but I don't know the better way to do it
    */
@@ -104,7 +121,8 @@ public:
       auto Zero = Zeros[i];
       auto One = Ones[i];
       auto Width = Widths[i];
-      errs() << "instrumenting " << CR << Zero << One << " at " << *Inst << "\n";
+      errs() << "instrumenting " << CR << " " <<
+        knownString(Zero, One) << " at:" << *Inst << "\n";
       BasicBlock *OldBB = Inst->getParent();
 
       /*
@@ -126,6 +144,10 @@ public:
          */
         builder.CreateBr(TrapBB);
       } else {
+        /*
+         * eventually we'll trap if this gets set
+         */
+        Value *NeedTrap = builder.getInt(APInt(1, 0));
         if (!CR.isFullSet()) {
           /*
            * the only trick here is that for a regular interval the value must be
@@ -142,13 +164,21 @@ public:
             Res3 = builder.CreateAnd(Res1, Res2);
           else
             Res3 = builder.CreateOr(Res1, Res2);
-          builder.CreateCondBr(Res3, Split, TrapBB);
+          NeedTrap = builder.CreateNot(builder.CreateOr(NeedTrap, Res3));
         }
         if (!Zero.isMinValue()) {
-          auto Res = builder.CreateAnd(Inst, builder.getInt(~Zero));
-          auto B = builder.CreateICmpEQ(Res, builder.getInt(APInt(Width, 0)));
-          builder.CreateCondBr(B, Split, TrapBB);
+          auto Mask = builder.getInt(~Zero);
+          auto Res = builder.CreateAnd(Inst, Mask);
+          auto B = builder.CreateICmpEQ(Res, Mask);
+          NeedTrap = builder.CreateOr(NeedTrap, B);
         }
+        if (!One.isMinValue()) {
+          auto Mask = builder.getInt(One);
+          auto Res = builder.CreateAnd(Inst, Mask);
+          auto B = builder.CreateICmpEQ(Res, Mask);
+          NeedTrap = builder.CreateOr(NeedTrap, B);
+        }
+        builder.CreateCondBr(NeedTrap, TrapBB, Split);
       }
     }
     return true;
