@@ -1,3 +1,6 @@
+#define DEBUG_TYPE "test-lvi"
+
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/LazyValueInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/ConstantRange.h"
@@ -8,8 +11,13 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+
+STATISTIC(TotalBits, "Total bits");
+STATISTIC(KnownBits, "Known bits");
+STATISTIC(IntervalBits, "Interval bits");
 
 using namespace llvm;
 
@@ -100,6 +108,9 @@ public:
       unsigned Width = Inst->getType()->getIntegerBitWidth();
       APInt Zero(Width, 0), One(Width, 0);
       computeKnownBits(Inst, Zero, One, DL);
+      TotalBits += Width;
+      IntervalBits += Width - CR.getSetSize().logBase2();
+      KnownBits += Zero.countPopulation() + One.countPopulation();
       if (!CR.isFullSet() || !Zero.isMinValue() || !One.isMinValue()) {
         Insts.push_back(Inst);
         CRs.push_back(CR);
